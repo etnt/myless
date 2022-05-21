@@ -16,6 +16,7 @@ pub struct App {
     terminal: Terminal,
     filename: String,
     log: String,
+    cur: usize, // current position
 }
 
 impl App {
@@ -25,9 +26,12 @@ impl App {
             terminal,
             filename,
             log: String::from("<log text goes here>"),
+            cur: 0,
         })
     }
 
+    // This it the main loop where we render the UI
+    // and react to key events.
     pub fn run(mut self) -> anyhow::Result<()> {
         loop {
             self.render_ui()?;
@@ -38,6 +42,7 @@ impl App {
         Ok(())
     }
 
+    // Here we are polling for any key event to occur.
     fn handle_event(&mut self) -> anyhow::Result<bool> {
         while crossterm::event::poll(std::time::Duration::from_secs(0))? {
             match crossterm::event::read()? {
@@ -55,10 +60,27 @@ impl App {
         Ok(false)
     }
 
+    // Take action depending on the key event.
     fn handle_key_event(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         match key.code {
             KeyCode::Char('q') => {
                 return Ok(true);
+            }
+            KeyCode::Char('o') => {
+                self.log = format!("TBD: prompt for a new file to be opened!");
+                return Ok(false);
+            }
+            KeyCode::Down => {
+                self.cur += 1;
+                self.log = format!("Got KeyCode Down");
+                return Ok(false);
+            }
+            KeyCode::Up => {
+                if self.cur > 0 {
+                    self.cur -= 1
+                };
+                self.log = format!("Got KeyCode Up");
+                return Ok(false);
             }
             x => {
                 self.log = format!("Got KeyCode {:?}", x);
@@ -67,9 +89,10 @@ impl App {
         }
     }
 
+    // Render the UI
     fn render_ui(&mut self) -> anyhow::Result<()> {
         self.terminal
-            .draw(|f| ui(f, &self.filename, self.log.clone()))?;
+            .draw(|f| ui(f, self.cur, &self.filename, self.log.clone()))?;
         Ok(())
     }
 
@@ -93,7 +116,15 @@ impl App {
     }
 }
 
-fn ui<B: Backend>(f: &mut Frame<B>, filename: &String, logtext: String) {
+fn ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, filename: &String, logtext: String) {
+    //
+    // Create the Layout of the UI.
+    //
+    // We have three parts:
+    //  - a frame with a help text for displaying the commands that can be used
+    //  - a frame where the file content is shown
+    //  - a frame where various internal log info is shown
+    //
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -107,23 +138,39 @@ fn ui<B: Backend>(f: &mut Frame<B>, filename: &String, logtext: String) {
         )
         .split(f.size());
 
-    let help = Block::default().title("Help").borders(Borders::ALL);
+    //
+    // Help frame
+    //
+    let helptext = "Quit=q , Scroll=Up/Down , OpenFile:o";
+    let help = Paragraph::new(helptext)
+        .block(Block::default().title("Help").borders(Borders::ALL))
+        .style(Style::default().fg(Color::White).bg(Color::Black))
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: true });
     f.render_widget(help, chunks[0]);
 
+    // FIXME stupid to read the file content every time we render the UI!!
     let contents = fs::read_to_string(filename).expect("Something went wrong reading the file");
-    let mut text = Vec::new();
+    let v: Vec<&str> = contents.split("\n").collect();
+    let text: Vec<Spans> = (&v[cur_pos..])
+        .iter()
+        .map(|line| Spans::from(*line))
+        .collect();
 
-    for line in contents.split("\n") {
-        text.push(Spans::from(line));
-    }
-
+    //
+    // File content frame
+    //
     let para = Paragraph::new(text)
-        .block(Block::default().title("Paragraph").borders(Borders::ALL))
+        .block(Block::default().title("File Content").borders(Borders::ALL))
         .style(Style::default().fg(Color::White).bg(Color::Black))
         .alignment(Alignment::Left)
         .wrap(Wrap { trim: true });
     f.render_widget(para, chunks[1]);
 
+    //
+    // Log frame
+    //
+    let logtext = format!("{} , height = {}", logtext, chunks[1].height);
     let log = Paragraph::new(logtext)
         .block(Block::default().title("Log").borders(Borders::ALL))
         .style(Style::default().fg(Color::White).bg(Color::Black))

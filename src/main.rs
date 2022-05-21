@@ -2,7 +2,7 @@ use std::env;
 
 mod ui;
 
-fn main() ->  anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         panic!("no filename specified");
