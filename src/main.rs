@@ -10,6 +10,7 @@ fn main() -> anyhow::Result<()> {
     let filename = &args[1];
 
     let app = ui::App::new(filename.clone())?;
-    app.run()?;
+    let res = app.run();
+    println!("res = {:?}", res);
     Ok(())
 }

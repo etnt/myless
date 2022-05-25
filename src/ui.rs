@@ -2,21 +2,28 @@ use crossterm::event::{KeyCode, KeyEvent};
 use std::fs;
 use tui::{
     backend::Backend,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::Spans,
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 
 type Terminal = tui::Terminal<tui::backend::CrosstermBackend<std::io::Stdout>>;
 
+enum UiState {
+    Main,
+    FilePrompt,
+}
+
 //#[derive(Debug)]
 pub struct App {
     terminal: Terminal,
     filename: String,
+    tmpname: String,
     log: String,
     cur: usize, // current position
+    state: UiState,
 }
 
 impl App {
@@ -25,8 +32,10 @@ impl App {
         Ok(Self {
             terminal,
             filename,
+            tmpname: String::from(""),
             log: String::from("<log text goes here>"),
             cur: 0,
+            state: UiState::Main,
         })
     }
 
@@ -62,37 +71,80 @@ impl App {
 
     // Take action depending on the key event.
     fn handle_key_event(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
+        match self.state {
+            UiState::FilePrompt => self.handle_input_key_event(key),
+            UiState::Main => self.handle_main_key_event(key),
+        }
+    }
+
+    fn handle_main_key_event(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         match key.code {
-            KeyCode::Char('q') => {
-                return Ok(true);
-            }
+            KeyCode::Char('q') => Ok(true),
             KeyCode::Char('o') => {
-                self.log = format!("TBD: prompt for a new file to be opened!");
-                return Ok(false);
+                self.log = format!("ENTER FILENAME: ");
+                self.state = UiState::FilePrompt;
+                Ok(false)
             }
             KeyCode::Down => {
                 self.cur += 1;
                 self.log = format!("Got KeyCode Down");
-                return Ok(false);
+                Ok(false)
             }
             KeyCode::Up => {
                 if self.cur > 0 {
                     self.cur -= 1
                 };
                 self.log = format!("Got KeyCode Up");
-                return Ok(false);
+                Ok(false)
             }
             x => {
                 self.log = format!("Got KeyCode {:?}", x);
-                return Ok(false);
+                Ok(false)
             }
+        }
+    }
+
+    fn handle_input_key_event(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
+        match key.code {
+            KeyCode::Char('q') => Ok(true),
+            KeyCode::Enter => {
+                self.filename.clear();
+                self.filename = self.tmpname.clone();
+                self.tmpname.clear();
+                self.cur = 0;
+                self.log = format!("Got filename: {}", self.filename);
+                self.state = UiState::Main;
+                Ok(false)
+            }
+            KeyCode::Backspace => {
+                self.tmpname.pop();
+                self.log = format!("ENTER FILENAME: {}", self.tmpname);
+                Ok(false)
+            }
+            KeyCode::Char(c) => {
+                self.tmpname.push(c);
+                self.log = format!("ENTER FILENAME: {}", self.tmpname);
+                Ok(false)
+            }
+            _x => Ok(false),
         }
     }
 
     // Render the UI
     fn render_ui(&mut self) -> anyhow::Result<()> {
         self.terminal
-            .draw(|f| ui(f, self.cur, &self.filename, self.log.clone()))?;
+            .draw(|f| main_ui(f, self.cur, &self.filename, self.log.clone()))?;
+        // match self.state {
+        //     UiState::Main => {
+        //         self.terminal
+        //             .draw(|f| main_ui(f, self.cur, &self.filename, self.log.clone()))?;
+        //     }
+        //     UiState::FilePrompt => {
+        //         let mut filename = String::from("");
+        //         self.terminal.draw(|f| get_filename(f, &mut filename))?;
+        //         self.state = UiState::Main;
+        //     }
+        // }
         Ok(())
     }
 
@@ -116,7 +168,7 @@ impl App {
     }
 }
 
-fn ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, filename: &String, logtext: String) {
+fn main_ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, filename: &String, logtext: String) {
     //
     // Create the Layout of the UI.
     //
@@ -150,7 +202,10 @@ fn ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, filename: &String, logtext: 
     f.render_widget(help, chunks[0]);
 
     // FIXME stupid to read the file content every time we render the UI!!
-    let contents = fs::read_to_string(filename).expect("Something went wrong reading the file");
+    let contents = match fs::read_to_string(filename) {
+        Ok(txt) => txt,
+        Err(e) => format!("ERROR: {:?}", e),
+    };
     let v: Vec<&str> = contents.split("\n").collect();
     let text: Vec<Spans> = (&v[cur_pos..])
         .iter()
@@ -170,7 +225,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, filename: &String, logtext: 
     //
     // Log frame
     //
-    let logtext = format!("{} , height = {}", logtext, chunks[1].height);
+    let logtext = format!("{}", logtext);
     let log = Paragraph::new(logtext)
         .block(Block::default().title("Log").borders(Borders::ALL))
         .style(Style::default().fg(Color::White).bg(Color::Black))
@@ -183,4 +238,40 @@ impl Drop for App {
     fn drop(&mut self) {
         let _x = self.teardown_terminal();
     }
+}
+
+fn get_filename<B: Backend>(f: &mut Frame<B>, filename: &mut String) {
+    let size = f.size();
+    let area = centered_rect(60, 20, size);
+    let block = Block::default().title("Popup").borders(Borders::ALL);
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+    filename.push_str("test.txt");
+}
+
+/// helper function to create a centered rect using up certain percentage of the available rect `r`
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_y) / 2),
+                Constraint::Percentage(percent_y),
+                Constraint::Percentage((100 - percent_y) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_x) / 2),
+                Constraint::Percentage(percent_x),
+                Constraint::Percentage((100 - percent_x) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(popup_layout[1])[1]
 }
