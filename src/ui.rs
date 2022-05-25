@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use std::fs;
+use std::{cmp, fs};
 use tui::{
     backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout},
@@ -22,6 +22,7 @@ pub struct App {
     filename: String,
     tmpname: String,
     content: String,
+    lines: usize,
     log: String,
     cur: usize, // current position
     state: UiState,
@@ -30,12 +31,14 @@ pub struct App {
 impl App {
     pub fn new(filename: String) -> anyhow::Result<Self> {
         let content = fs::read_to_string(&filename).expect("could not read the file");
+        let lines = count_newlines(&content);
         let terminal = Self::setup_terminal()?;
         Ok(Self {
             terminal,
             filename,
             tmpname: String::from(""),
-            content: content,
+            content,
+            lines,
             log: String::from("<log text goes here>"),
             cur: 0,
             state: UiState::Main,
@@ -119,6 +122,7 @@ impl App {
                     Ok(txt) => txt,
                     Err(e) => format!("ERROR: {:?}", e),
                 };
+                self.lines = count_newlines(&content);
                 self.content = content;
                 self.log = format!("Got filename: {}", self.filename);
                 self.state = UiState::Main;
@@ -140,8 +144,15 @@ impl App {
 
     // Render the UI
     fn render_ui(&mut self) -> anyhow::Result<()> {
-        self.terminal
-            .draw(|f| main_ui(f, self.cur, &self.content, self.log.clone()))?;
+        self.terminal.draw(|f| {
+            main_ui(
+                f,
+                &mut self.cur,
+                self.lines,
+                &self.content,
+                self.log.clone(),
+            )
+        })?;
         Ok(())
     }
 
@@ -165,7 +176,13 @@ impl App {
     }
 }
 
-fn main_ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, content: &String, logtext: String) {
+fn main_ui<B: Backend>(
+    f: &mut Frame<B>,
+    cur_pos: &mut usize,
+    lines: usize,
+    content: &String,
+    logtext: String,
+) {
     //
     // Create the Layout of the UI.
     //
@@ -202,7 +219,23 @@ fn main_ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, content: &String, logte
     // File content frame
     //
     let v: Vec<&str> = content.split("\n").collect();
-    let text: Vec<Spans> = (&v[cur_pos..])
+
+    // Calculate the max amount of scrolling to be done
+    // with respect to the number of lines and the amount
+    // of lines displayed.
+    let height = chunks[1].height as usize;
+    let max_pos = if lines <= height {
+        // The whole file is contained within the Frame.
+        0
+    } else {
+        // Only allow scrolling until the last line of
+        // the file is at the bottom of the Frame.
+        cmp::min(lines - height + 2 as usize, *cur_pos)
+    };
+    // Adjust cur_pos accordingly.
+    *cur_pos = max_pos;
+
+    let text: Vec<Spans> = (&v[max_pos..])
         .iter()
         .map(|line| Spans::from(*line))
         .collect();
@@ -216,7 +249,10 @@ fn main_ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, content: &String, logte
     //
     // Log frame
     //
-    let logtext = format!("{}", logtext);
+    let logtext = format!(
+        "{} , max_pos = {} , cur_pos = {} , height = {} , vlen = {}",
+        logtext, max_pos, *cur_pos, height, lines
+    );
     let log = Paragraph::new(logtext)
         .block(Block::default().title("Log").borders(Borders::ALL))
         .style(Style::default().fg(Color::White).bg(Color::Black))
@@ -229,4 +265,8 @@ impl Drop for App {
     fn drop(&mut self) {
         let _x = self.teardown_terminal();
     }
+}
+
+fn count_newlines(s: &str) -> usize {
+    s.as_bytes().iter().filter(|&&c| c == b'\n').count()
 }
