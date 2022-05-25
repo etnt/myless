@@ -2,10 +2,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 use std::fs;
 use tui::{
     backend::Backend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style},
     text::Spans,
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 
@@ -21,6 +21,7 @@ pub struct App {
     terminal: Terminal,
     filename: String,
     tmpname: String,
+    content: String,
     log: String,
     cur: usize, // current position
     state: UiState,
@@ -28,11 +29,13 @@ pub struct App {
 
 impl App {
     pub fn new(filename: String) -> anyhow::Result<Self> {
+        let content = fs::read_to_string(&filename).expect("could not read the file");
         let terminal = Self::setup_terminal()?;
         Ok(Self {
             terminal,
             filename,
             tmpname: String::from(""),
+            content: content,
             log: String::from("<log text goes here>"),
             cur: 0,
             state: UiState::Main,
@@ -112,6 +115,11 @@ impl App {
                 self.filename = self.tmpname.clone();
                 self.tmpname.clear();
                 self.cur = 0;
+                let content = match fs::read_to_string(&self.filename) {
+                    Ok(txt) => txt,
+                    Err(e) => format!("ERROR: {:?}", e),
+                };
+                self.content = content;
                 self.log = format!("Got filename: {}", self.filename);
                 self.state = UiState::Main;
                 Ok(false)
@@ -133,18 +141,7 @@ impl App {
     // Render the UI
     fn render_ui(&mut self) -> anyhow::Result<()> {
         self.terminal
-            .draw(|f| main_ui(f, self.cur, &self.filename, self.log.clone()))?;
-        // match self.state {
-        //     UiState::Main => {
-        //         self.terminal
-        //             .draw(|f| main_ui(f, self.cur, &self.filename, self.log.clone()))?;
-        //     }
-        //     UiState::FilePrompt => {
-        //         let mut filename = String::from("");
-        //         self.terminal.draw(|f| get_filename(f, &mut filename))?;
-        //         self.state = UiState::Main;
-        //     }
-        // }
+            .draw(|f| main_ui(f, self.cur, &self.content, self.log.clone()))?;
         Ok(())
     }
 
@@ -168,7 +165,7 @@ impl App {
     }
 }
 
-fn main_ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, filename: &String, logtext: String) {
+fn main_ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, content: &String, logtext: String) {
     //
     // Create the Layout of the UI.
     //
@@ -201,20 +198,14 @@ fn main_ui<B: Backend>(f: &mut Frame<B>, cur_pos: usize, filename: &String, logt
         .wrap(Wrap { trim: true });
     f.render_widget(help, chunks[0]);
 
-    // FIXME stupid to read the file content every time we render the UI!!
-    let contents = match fs::read_to_string(filename) {
-        Ok(txt) => txt,
-        Err(e) => format!("ERROR: {:?}", e),
-    };
-    let v: Vec<&str> = contents.split("\n").collect();
+    //
+    // File content frame
+    //
+    let v: Vec<&str> = content.split("\n").collect();
     let text: Vec<Spans> = (&v[cur_pos..])
         .iter()
         .map(|line| Spans::from(*line))
         .collect();
-
-    //
-    // File content frame
-    //
     let para = Paragraph::new(text)
         .block(Block::default().title("File Content").borders(Borders::ALL))
         .style(Style::default().fg(Color::White).bg(Color::Black))
@@ -238,40 +229,4 @@ impl Drop for App {
     fn drop(&mut self) {
         let _x = self.teardown_terminal();
     }
-}
-
-fn get_filename<B: Backend>(f: &mut Frame<B>, filename: &mut String) {
-    let size = f.size();
-    let area = centered_rect(60, 20, size);
-    let block = Block::default().title("Popup").borders(Borders::ALL);
-    f.render_widget(Clear, area);
-    f.render_widget(block, area);
-    filename.push_str("test.txt");
-}
-
-/// helper function to create a centered rect using up certain percentage of the available rect `r`
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(
-            [
-                Constraint::Percentage((100 - percent_y) / 2),
-                Constraint::Percentage(percent_y),
-                Constraint::Percentage((100 - percent_y) / 2),
-            ]
-            .as_ref(),
-        )
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints(
-            [
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
-            ]
-            .as_ref(),
-        )
-        .split(popup_layout[1])[1]
 }
