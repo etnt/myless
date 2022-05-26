@@ -150,7 +150,17 @@ impl App {
             }
             KeyCode::Enter if self.state == UiState::SearchPrompt => {
                 self.search = self.tmpbuf.clone();
-                self.log = format!("Got: {}", self.tmpbuf);
+                self.log = format!("Could not find: {}", self.tmpbuf);
+                for (y, line) in self.content.lines().enumerate() {
+                    match line.find(&self.search) {
+                        Some(x) => {
+                            self.log =
+                                format!("Found: {} at line: {} , pos: {}", self.tmpbuf, y, x);
+                            break;
+                        }
+                        None => continue,
+                    }
+                }
                 self.tmpbuf.clear();
                 self.state = UiState::Main;
                 Ok(false)
