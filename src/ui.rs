@@ -249,10 +249,7 @@ fn main_ui<B: Backend>(
     //
     // Log frame
     //
-    let logtext = format!(
-        "{} , max_pos = {} , cur_pos = {} , height = {} , vlen = {}",
-        logtext, max_pos, *cur_pos, height, lines
-    );
+    let logtext = format!("{}", logtext);
     let log = Paragraph::new(logtext)
         .block(Block::default().title("Log").borders(Borders::ALL))
         .style(Style::default().fg(Color::White).bg(Color::Black))
