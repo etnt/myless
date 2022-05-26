@@ -8,6 +8,7 @@ use tui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
+use anyhow::{Result,Context};
 
 type Terminal = tui::Terminal<tui::backend::CrosstermBackend<std::io::Stdout>>;
 
@@ -29,8 +30,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(filename: String) -> anyhow::Result<Self> {
-        let content = fs::read_to_string(&filename).expect("could not read the file");
+    pub fn new(filename: String) -> Result<Self> {
+        let content = fs::read_to_string(&filename)
+            .context("could not read the file")?;
+
         let lines = count_newlines(&content);
         let terminal = Self::setup_terminal()?;
         Ok(Self {

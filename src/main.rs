@@ -6,13 +6,15 @@ fn main() -> anyhow::Result<()> {
 
     let filename = parse_args()
         .unwrap_or_else(|err| {
-        println!("Wrong input arguments: {}", err);
+        eprintln!("Wrong input arguments: {}", err);
         process::exit(1);
     });
 
     let app = ui::App::new(filename)?;
-    let res = app.run();
-    println!("res = {:?}", res);
+    app.run().unwrap_or_else(|err| {
+        eprintln!("Wrong input arguments: {}", err);
+        process::exit(1);
+    });
 
     Ok(())
 }
