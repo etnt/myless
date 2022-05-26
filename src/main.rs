@@ -4,8 +4,8 @@ mod ui;
 
 fn main() -> anyhow::Result<()> {
 
-let filename = parse_args()
-    .unwrap_or_else(|err| {
+    let filename = parse_args()
+        .unwrap_or_else(|err| {
         println!("Wrong input arguments: {}", err);
         process::exit(1);
     });
