@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use crossterm::event::{KeyCode, KeyEvent};
 use std::{cmp, fs};
 use tui::{
@@ -8,21 +9,31 @@ use tui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
-use anyhow::{Result,Context};
 
 type Terminal = tui::Terminal<tui::backend::CrosstermBackend<std::io::Stdout>>;
 
+#[derive(PartialEq)]
 enum UiState {
     Main,
     FilePrompt,
+    SearchPrompt,
+}
+
+fn prompt_string(s: &UiState) -> String {
+    match s {
+        UiState::Main => String::from(""),
+        UiState::FilePrompt => String::from("ENTER FILENAME: "),
+        UiState::SearchPrompt => String::from("SEARCH STRING: "),
+    }
 }
 
 //#[derive(Debug)]
 pub struct App {
     terminal: Terminal,
     filename: String,
-    tmpname: String,
+    tmpbuf: String,
     content: String,
+    search: String,
     lines: usize,
     log: String,
     cur: usize, // current position
@@ -31,16 +42,16 @@ pub struct App {
 
 impl App {
     pub fn new(filename: String) -> Result<Self> {
-        let content = fs::read_to_string(&filename)
-            .context("could not read the file")?;
+        let content = fs::read_to_string(&filename).context("could not read the file")?;
 
         let lines = count_newlines(&content);
         let terminal = Self::setup_terminal()?;
         Ok(Self {
             terminal,
             filename,
-            tmpname: String::from(""),
+            tmpbuf: String::from(""),
             content,
+            search: String::from(""),
             lines,
             log: String::from("<log text goes here>"),
             cur: 0,
@@ -82,28 +93,34 @@ impl App {
     fn handle_key_event(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         match self.state {
             UiState::FilePrompt => self.handle_input_key_event(key),
+            UiState::SearchPrompt => self.handle_input_key_event(key),
             UiState::Main => self.handle_main_key_event(key),
         }
     }
 
     fn handle_main_key_event(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         match key.code {
-            KeyCode::Char('q') => Ok(true),
+            KeyCode::Char('q') | KeyCode::Esc => Ok(true),
             KeyCode::Char('o') => {
-                self.log = format!("ENTER FILENAME: ");
                 self.state = UiState::FilePrompt;
+                self.log = prompt_string(&self.state);
+                Ok(false)
+            }
+            KeyCode::Char('s') => {
+                self.state = UiState::SearchPrompt;
+                self.log = prompt_string(&self.state);
                 Ok(false)
             }
             KeyCode::Down => {
                 self.cur += 1;
-                self.log = format!("Got KeyCode Down");
+                self.log = "Got KeyCode Down".to_string();
                 Ok(false)
             }
             KeyCode::Up => {
                 if self.cur > 0 {
                     self.cur -= 1
                 };
-                self.log = format!("Got KeyCode Up");
+                self.log = "Got KeyCode Up".to_string();
                 Ok(false)
             }
             x => {
@@ -115,11 +132,12 @@ impl App {
 
     fn handle_input_key_event(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         match key.code {
-            KeyCode::Char('q') => Ok(true),
-            KeyCode::Enter => {
+            KeyCode::Esc => Ok(true),
+            KeyCode::Enter if self.state == UiState::FilePrompt => {
                 self.filename.clear();
-                self.filename = self.tmpname.clone();
-                self.tmpname.clear();
+                self.filename = self.tmpbuf.clone();
+                self.log = format!("Got: {}", self.tmpbuf);
+                self.tmpbuf.clear();
                 self.cur = 0;
                 let content = match fs::read_to_string(&self.filename) {
                     Ok(txt) => txt,
@@ -127,18 +145,24 @@ impl App {
                 };
                 self.lines = count_newlines(&content);
                 self.content = content;
-                self.log = format!("Got filename: {}", self.filename);
+                self.state = UiState::Main;
+                Ok(false)
+            }
+            KeyCode::Enter if self.state == UiState::SearchPrompt => {
+                self.search = self.tmpbuf.clone();
+                self.log = format!("Got: {}", self.tmpbuf);
+                self.tmpbuf.clear();
                 self.state = UiState::Main;
                 Ok(false)
             }
             KeyCode::Backspace => {
-                self.tmpname.pop();
-                self.log = format!("ENTER FILENAME: {}", self.tmpname);
+                self.tmpbuf.pop();
+                self.log = format!("{}: {}", prompt_string(&self.state), self.tmpbuf);
                 Ok(false)
             }
             KeyCode::Char(c) => {
-                self.tmpname.push(c);
-                self.log = format!("ENTER FILENAME: {}", self.tmpname);
+                self.tmpbuf.push(c);
+                self.log = format!("{} {}", prompt_string(&self.state), self.tmpbuf);
                 Ok(false)
             }
             _x => Ok(false),
@@ -210,7 +234,7 @@ fn main_ui<B: Backend>(
     //
     // Help frame
     //
-    let helptext = "Quit=q , Scroll=Up/Down , OpenFile:o";
+    let helptext = "Quit=q/Esq , Scroll=Up/Down , OpenFile:o , Search:s";
     let help = Paragraph::new(helptext)
         .block(Block::default().title("Help").borders(Borders::ALL))
         .style(Style::default().fg(Color::White).bg(Color::Black))
@@ -221,7 +245,7 @@ fn main_ui<B: Backend>(
     //
     // File content frame
     //
-    let v: Vec<&str> = content.split("\n").collect();
+    let v: Vec<&str> = content.lines().collect();
 
     // Calculate the max amount of scrolling to be done
     // with respect to the number of lines and the amount
@@ -233,7 +257,7 @@ fn main_ui<B: Backend>(
     } else {
         // Only allow scrolling until the last line of
         // the file is at the bottom of the Frame.
-        cmp::min(lines - height + 2 as usize, *cur_pos)
+        cmp::min(lines - height + 2_usize, *cur_pos)
     };
     // Adjust cur_pos accordingly.
     *cur_pos = max_pos;
@@ -252,7 +276,7 @@ fn main_ui<B: Backend>(
     //
     // Log frame
     //
-    let logtext = format!("{}", logtext);
+    let logtext = logtext;
     let log = Paragraph::new(logtext)
         .block(Block::default().title("Log").borders(Borders::ALL))
         .style(Style::default().fg(Color::White).bg(Color::Black))
